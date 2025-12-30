@@ -94,21 +94,21 @@ function Invoke-GraphGetAll {
 # Staleness evaluation
 # ---------------------------
 
-function Parse-GraphDateUtcOrNull {
+function ConvertTo-GraphDateUtc {
     param([string] $Value)
     if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
     try { return ([datetime]::Parse($Value)).ToUniversalTime() } catch { return $null }
 }
 
-function Classify-Device {
+function Get-DeviceClassification {
     param(
         [Parameter(Mandatory)] $Device,
         [Parameter(Mandatory)] [datetime] $CutoffUtc
     )
 
     # This property is commonly used when present, but may be null in some tenants.
-    $lastSignInUtc = Parse-GraphDateUtcOrNull -Value $Device.approximateLastSignInDateTime
-    $createdUtc    = Parse-GraphDateUtcOrNull -Value $Device.createdDateTime
+    $lastSignInUtc = ConvertTo-GraphDateUtc -Value $Device.approximateLastSignInDateTime
+    $createdUtc    = ConvertTo-GraphDateUtc -Value $Device.createdDateTime
 
     if ($lastSignInUtc) {
         if ($lastSignInUtc -lt $CutoffUtc) { return 'Stale' }
@@ -140,10 +140,10 @@ try {
     Write-Host "Devices fetched: $($devices.Count)"
 
     $results = @(foreach ($d in $devices) {
-        $classification = Classify-Device -Device $d -CutoffUtc $cutoffUtc
+        $classification = Get-DeviceClassification -Device $d -CutoffUtc $cutoffUtc
 
-        $lastSignInUtc = Parse-GraphDateUtcOrNull -Value $d.approximateLastSignInDateTime
-        $createdUtc = Parse-GraphDateUtcOrNull -Value $d.createdDateTime
+        $lastSignInUtc = ConvertTo-GraphDateUtc -Value $d.approximateLastSignInDateTime
+        $createdUtc = ConvertTo-GraphDateUtc -Value $d.createdDateTime
 
         # Calculate days since last activity (sign-in or creation)
         $daysSinceLastActivity = if ($lastSignInUtc) {
