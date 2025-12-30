@@ -52,17 +52,34 @@ Reports are written to Azure Blob Storage with the following structure:
 
 ```json
 {
-  "version": "v1-entra-only",
-  "generatedAtUtc": "2025-12-26T10:00:00.000Z",
-  "staleDays": 90,
-  "totalDevices": 150,
-  "summary": [
-    { "classification": "Active", "count": 100 },
-    { "classification": "Stale", "count": 30 },
-    { "classification": "Stale-NoSignIn", "count": 15 },
-    { "classification": "Unknown", "count": 5 }
-  ],
-  "items": [ /* Array of device details */ ]
+    "version": "v1-entra-only",
+    "generatedAtUtc": "2025-12-30T12:05:06.9088009Z",
+    "staleDaysThreshold": 90,
+    "totalDevices": 1,
+    "summary": [
+        {
+            "classification": "Active",
+            "count": 1
+        }
+    ],
+    "items": [
+        {
+            "id": "102dec0e-ed05-45a6-804c-aae7590908ba",
+            "displayName": "iPhone",
+            "deviceId": "20a629d5-8d94-4b69-b5bc-751f6900bd6d",
+            "accountEnabled": true,
+            "operatingSystem": "iOS",
+            "operatingSystemVersion": "26.2",
+            "trustType": "Workplace",
+            "createdDateTime": "2025-12-23T10:48:26Z",
+            "approximateLastSignInDateTime": "2025-12-23T10:48:25Z",
+            "lastSignInUtc": "2025-12-23T10:48:25.0000000Z",
+            "classification": "Active",
+            "daysSinceLastActivity": 7,
+            "staleThresholdDateUtc": "2025-10-01T12:05:06.9088009Z",
+            "staleDaysThreshold": 90
+        }
+    ]
 }
 ```
 
