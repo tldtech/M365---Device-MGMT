@@ -4,12 +4,14 @@
 
 .DESCRIPTION
     This Azure Function automatically identifies stale devices in Entra ID (Azure AD) based on their
-    last sign-in date and performs actions according to the configured mode. It supports four modes:
+    last sign-in date and performs actions according to the configured mode. It supports three modes:
     
-    - report:  Simply generates a report of all devices with their staleness classification
-    - detect:  Creates an action plan showing what would be done, but doesn't execute
+    - detect:  Shows which stale devices would be acted on (dry-run/preview) - DEFAULT
     - disable: Disables stale devices (requires CONFIRM_DISABLE=true for safety)
     - tag:     Tags stale devices with metadata using open extensions (requires CONFIRM_TAG=true)
+    
+    All modes generate a report showing device inventory, classifications, and an action plan
+    identifying which stale devices will be or would be acted upon.
     
     The function uses the approximateLastSignInDateTime property from Microsoft Graph API to determine
     if a device hasn't been used within the configured threshold (default 90 days). For devices without
@@ -38,21 +40,25 @@
     Timer trigger input from Azure Functions. This is provided automatically by the Azure Functions runtime.
 
 .NOTES
-    Version:        1.1 (Entra-only)
+    Version:        1.2 (Entra-only, focused)
     Author:         TLDTech.io
     Purpose:        Automated stale device lifecycle management for Entra ID
     
 .EXAMPLE
-    # Run in report mode (default)
-    MODE=report
+    # Run in detect mode (default) - preview what would be acted on
+    MODE=detect
     
 .EXAMPLE
-    # Run in detect mode to see what would be disabled
+    # Preview with custom staleness threshold
     MODE=detect STALE_DAYS=60
     
 .EXAMPLE
     # Actually disable stale devices (requires confirmation)
     MODE=disable CONFIRM_DISABLE=true MAX_ACTIONS=100
+
+.EXAMPLE
+    # Tag stale devices with metadata (requires confirmation)
+    MODE=tag CONFIRM_TAG=true
 #>
 
 param($Timer)
@@ -68,7 +74,7 @@ $ErrorActionPreference = 'Stop'
 
 # Core staleness configuration
 $staleDays = [int]($env:STALE_DAYS ?? 90) # Days of inactivity before a device is considered stale
-$mode = ($env:MODE ?? 'report').ToLowerInvariant() # Operating mode: report | detect | disable | tag
+$mode = ($env:MODE ?? 'detect').ToLowerInvariant() # Operating mode: detect | disable | tag
 $graphApiVersion = ($env:GRAPH_API_VERSION ?? 'v1.0') # Microsoft Graph API version to use
 
 # V1.1 safety rails and tagging configuration
@@ -86,7 +92,7 @@ $nowUtcStr = $nowUtc.ToString('o')          # ISO 8601 format for consistent rep
 $cutoffUtcStr = $cutoffUtc.ToString('o')
 
 # Display configuration summary for visibility in function logs
-Write-Host "=== Entra stale device sweep (v1.1: Entra-only) ==="
+Write-Host "=== Entra stale device sweep (v1.2: focused) ==="
 Write-Host "Now (UTC):     $nowUtcStr"
 Write-Host "Cutoff (UTC):  $cutoffUtcStr"
 Write-Host "Mode:          $mode"
@@ -422,7 +428,7 @@ try {
 
     # Build base report object (action metadata will be appended later)
     $report = [pscustomobject]@{
-        version            = "v1.1-entra-only"
+        version            = "v1.2-focused"
         generatedAtUtc     = $nowUtcStr
         staleDaysThreshold = $staleDays
         totalDevices       = $devices.Count
@@ -433,7 +439,8 @@ try {
     # ---------------------------
     # Step 4: Build Action Pipeline
     # ---------------------------
-    # Determine which devices to act on based on mode and safety settings
+    # Identify which stale devices would be acted upon
+    # This runs for all modes since this function is focused on stale device management
 
     # Only act on confidently stale devices; ignore 'Unknown' and 'Active' classifications
     # This conservative approach prevents accidental actions on devices we can't assess
@@ -468,12 +475,8 @@ try {
     $actionsExecuted = [System.Collections.Generic.List[object]]::new()
 
     switch ($mode) {
-        'report' {
-            # Report mode: just generate the report, no actions
-        }
-
         'detect' {
-            # Detect mode: show what would be done, but don't execute
+            # Detect mode: preview only, no actions executed
         }
 
         'disable' {
@@ -510,7 +513,7 @@ try {
                 $props = @{
                     status             = "stale"
                     classification     = $a.classification
-                    version            = "v1.1-entra-only"
+                    version            = "v1.2-focused"
                     evaluatedAtUtc     = $nowUtcStr
                     staleDaysThreshold = $staleDays
                     cutoffUtc          = $cutoffUtcStr
@@ -527,7 +530,7 @@ try {
         }
 
         default {
-            Write-Warning "Unknown MODE='$mode'. No actions executed."
+            Write-Warning "Unknown MODE='$mode'. Valid modes: detect, disable, tag. No actions executed."
         }
     }
 
