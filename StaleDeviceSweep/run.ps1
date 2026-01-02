@@ -74,15 +74,15 @@ $ErrorActionPreference = 'Stop'
 
 # Core staleness configuration
 $staleDays = [int]($env:STALE_DAYS ?? 90) # Days of inactivity before a device is considered stale
-$mode = ($env:MODE ?? 'detect').ToLowerInvariant() # Operating mode: detect | disable | tag
+$mode = ($env:MODE ?? 'disable').ToLowerInvariant() # Operating mode: detect | disable | tag
 $graphApiVersion = ($env:GRAPH_API_VERSION ?? 'v1.0') # Microsoft Graph API version to use
 
 # V1.1 safety rails and tagging configuration
 # These settings prevent accidental bulk operations and require explicit confirmation
 $maxActions     = [int]($env:MAX_ACTIONS ?? 50) # Maximum number of devices to act on per execution (throttle)
-$confirmDisable = (($env:CONFIRM_DISABLE ?? 'false').ToLowerInvariant() -eq 'true') # Must be explicitly set to 'true' to disable devices
-$confirmTag     = (($env:CONFIRM_TAG ?? 'false').ToLowerInvariant() -eq 'true') # Must be explicitly set to 'true' to tag devices
-$extensionName  = ($env:EXTENSION_NAME ?? 'com.staleDeviceSweep') # Open extension name for storing metadata on devices
+$confirmDisable = (($env:CONFIRM_DISABLE ?? 'true').ToLowerInvariant() -eq 'true') # Must be explicitly set to 'true' to disable devices
+$confirmTag     = (($env:CONFIRM_TAG ?? 'true').ToLowerInvariant() -eq 'true') # Must be explicitly set to 'true' to tag devices
+$extensionName  = ($env:EXTENSION_NAME ?? 'STALE') # Open extension name for storing metadata on devices
 
 # Calculate time boundaries for staleness evaluation
 # All times are stored in UTC to avoid timezone issues
