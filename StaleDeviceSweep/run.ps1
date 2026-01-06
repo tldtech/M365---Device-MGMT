@@ -11,8 +11,8 @@
     - tag:     Tags stale devices with metadata using open extensions (requires CONFIRM_TAG=true)
 
     Optional Intune enrichment:
-    - When enabled (INCLUDE_INTUNE=true), the function can pull Intune managed device properties
-      and optionally use Intune activity (lastSyncDateTime) in staleness evaluation.
+    - When enabled (INCLUDE_INTUNE=true), the function can pull Intune managed device properties 
+    and optionally use Intune activity (lastSyncDateTime) in staleness evaluation.
 
     Activity source (when INCLUDE_INTUNE=true):
     - ACTIVITY_SOURCE=signin      -> Entra approximateLastSignInDateTime only (default behavior)
@@ -44,9 +44,17 @@
     Output:
     - Generates a JSON report written to blob storage via output binding
     - Report includes device inventory, classifications, action plans, and execution results
+    
+    Permissions:
+    Requires appropriate permissions to read devices from Entra ID and optionally Intune,
+    as well as to disable devices or update open extensions if those modes are used.
+    - Detect only: Entra-only: Device.Read.All  ￼
+	- Disable enabled: Device.ReadWrite.All  ￼
+	- Tag enabled: Device.ReadWrite.All  ￼
+	- Any of the above + Intune enrichment: add DeviceManagementManagedDevices.Read.All 
 
 .PARAMETER Timer
-    Timer trigger input from Azure Functions. This is provided automatically by the Azure Functions runtime.
+    Timer trigger input from Azure Functions. This is provided automatically by the Azure Functions runtime. ￼
 
 .NOTES
     Version:        1.3 (Entra-only + optional Intune enrichment)
@@ -277,6 +285,29 @@ function ConvertTo-GraphDateUtc {
     try { return ([datetime]::Parse($Value)).ToUniversalTime() } catch { return $null }
 }
 
+function Get-ActivityTimestamp {
+    <#
+        Calculates the activity timestamp based on the configured source.
+        Returns the activity datetime (UTC) or $null if no activity found.
+    #>
+    param(
+        [datetime]$LastSignInUtc = $null,
+        [datetime]$IntuneLastSyncUtc = $null,
+        [Parameter(Mandatory)][ValidateSet('signin', 'intune', 'mostrecent')][string]$ActivitySource
+    )
+
+    switch ($ActivitySource) {
+        'signin' { return $LastSignInUtc }
+        'intune' { return $IntuneLastSyncUtc }
+        'mostrecent' {
+            if ($LastSignInUtc -and $IntuneLastSyncUtc) {
+                return if ($LastSignInUtc -gt $IntuneLastSyncUtc) { $LastSignInUtc } else { $IntuneLastSyncUtc }
+            }
+            return if ($LastSignInUtc) { $LastSignInUtc } else { $IntuneLastSyncUtc }
+        }
+    }
+}
+
 function Get-IntuneManagedDevicesMap {
     <#
       Returns a hashtable keyed by azureADDeviceId (lowercase).
@@ -299,14 +330,29 @@ function Get-IntuneManagedDevicesMap {
 
         $newSync = ConvertTo-GraphDateUtc -Value $md.lastSyncDateTime
         $existing = $map[$key]
+        
+        # Store only needed properties as lightweight object
+        $intuneData = @{
+            id                  = $md.id
+            deviceName          = $md.deviceName
+            lastSyncDateTimeUtc = $newSync
+            lastSyncDateTime    = $md.lastSyncDateTime
+            enrolledDateTime    = $md.enrolledDateTime
+            complianceState     = $md.complianceState
+            managementAgent     = $md.managementAgent
+            operatingSystem     = $md.operatingSystem
+            osVersion           = $md.osVersion
+            userPrincipalName   = $md.userPrincipalName
+        }
+        
         if (-not $existing) {
-            $map[$key] = $md
+            $map[$key] = $intuneData
             continue
         }
 
-        $oldSync = ConvertTo-GraphDateUtc -Value $existing.lastSyncDateTime
+        $oldSync = $existing.lastSyncDateTimeUtc
         if ($newSync -and (-not $oldSync -or $newSync -gt $oldSync)) {
-            $map[$key] = $md
+            $map[$key] = $intuneData
         }
     }
 
@@ -323,42 +369,16 @@ function Get-DeviceClassification {
       Fallback if no activity: createdDateTime -> Stale-NoSignIn/Unknown
     #>
     param(
-        [Parameter(Mandatory)] $Device,
         [Parameter(Mandatory)] [datetime] $CutoffUtc,
-        $IntuneDevice = $null,
-        [Parameter(Mandatory)] [ValidateSet('signin', 'intune', 'mostrecent')] [string] $ActivitySource
+        [datetime] $ActivityUtc = $null,
+        [datetime] $CreatedUtc = $null
     )
 
-    $lastSignInUtc = ConvertTo-GraphDateUtc -Value $Device.approximateLastSignInDateTime
-    $createdUtc = ConvertTo-GraphDateUtc -Value $Device.createdDateTime
-
-    $intuneLastSyncUtc = $null
-    if ($IntuneDevice) {
-        $intuneLastSyncUtc = ConvertTo-GraphDateUtc -Value $IntuneDevice.lastSyncDateTime
+    if ($ActivityUtc) {
+        return if ($ActivityUtc -lt $CutoffUtc) { 'Stale' } else { 'Active' }
     }
 
-    $activityUtc = switch ($ActivitySource) {
-        'signin' { $lastSignInUtc }
-        'intune' { $intuneLastSyncUtc }
-        'mostrecent' {
-            if ($lastSignInUtc -and $intuneLastSyncUtc) {
-                if ($lastSignInUtc -gt $intuneLastSyncUtc) { $lastSignInUtc } else { $intuneLastSyncUtc }
-            }
-            elseif ($lastSignInUtc) {
-                $lastSignInUtc
-            }
-            else {
-                $intuneLastSyncUtc
-            }
-        }
-    }
-
-    if ($activityUtc) {
-        if ($activityUtc -lt $CutoffUtc) { return 'Stale' }
-        return 'Active'
-    }
-
-    if ($createdUtc -and $createdUtc -lt $CutoffUtc) {
+    if ($CreatedUtc -and $CreatedUtc -lt $CutoffUtc) {
         return 'Stale-NoSignIn'
     }
 
@@ -387,32 +407,35 @@ try {
     }
 
     # Step 3: Classify devices
-    $results = [System.Collections.Generic.List[object]]::new()
+    $results = [System.Collections.Generic.List[object]]::new($devices.Count)
 
     foreach ($d in $devices) {
+        # Parse dates once and cache
+        $lastSignInUtc = ConvertTo-GraphDateUtc -Value $d.approximateLastSignInDateTime
+        $createdUtc = ConvertTo-GraphDateUtc -Value $d.createdDateTime
+        
+        # Lookup Intune data if enabled
         $intune = $null
+        $intuneLastSyncUtc = $null
         if ($includeIntune -and $intuneMap -and $d.deviceId) {
             $k = ($d.deviceId.ToString()).ToLowerInvariant()
             $intune = $intuneMap[$k]
+            $intuneLastSyncUtc = if ($intune) { $intune.lastSyncDateTimeUtc } else { $null }
         }
 
-        $classification = Get-DeviceClassification -Device $d -CutoffUtc $cutoffUtc -IntuneDevice $intune -ActivitySource $activitySource
+        # Calculate activity timestamp once using helper
+        $activityUtc = Get-ActivityTimestamp `
+            -LastSignInUtc $lastSignInUtc `
+            -IntuneLastSyncUtc $intuneLastSyncUtc `
+            -ActivitySource $activitySource
 
-        $lastSignInUtc = ConvertTo-GraphDateUtc -Value $d.approximateLastSignInDateTime
-        $createdUtc = ConvertTo-GraphDateUtc -Value $d.createdDateTime
-        $intuneLastSyncUtc = if ($intune) { ConvertTo-GraphDateUtc -Value $intune.lastSyncDateTime } else { $null }
+        # Classify using simplified function
+        $classification = Get-DeviceClassification `
+            -CutoffUtc $cutoffUtc `
+            -ActivityUtc $activityUtc `
+            -CreatedUtc $createdUtc
 
-        $activityUtc = switch ($activitySource) {
-            'signin' { $lastSignInUtc }
-            'intune' { $intuneLastSyncUtc }
-            'mostrecent' {
-                if ($lastSignInUtc -and $intuneLastSyncUtc) {
-                    if ($lastSignInUtc -gt $intuneLastSyncUtc) { $lastSignInUtc } else { $intuneLastSyncUtc }
-                }
-                elseif ($lastSignInUtc) { $lastSignInUtc } else { $intuneLastSyncUtc }
-            }
-        }
-
+        # Calculate days since activity
         $daysSinceLastActivity = if ($activityUtc) {
             [int]($nowUtc - $activityUtc).TotalDays
         }
@@ -423,39 +446,44 @@ try {
             $null
         }
 
-        $results.Add([pscustomobject]@{
-                # Entra
-                id                            = $d.id
-                displayName                   = $d.displayName
-                deviceId                      = $d.deviceId
-                accountEnabled                = $d.accountEnabled
-                operatingSystem               = $d.operatingSystem
-                operatingSystemVersion        = $d.operatingSystemVersion
-                trustType                     = $d.trustType
-                createdDateTime               = $d.createdDateTime
-                approximateLastSignInDateTime = $d.approximateLastSignInDateTime
-                lastSignInUtc                 = if ($lastSignInUtc) { $lastSignInUtc.ToString('o') } else { $null }
+        # Build result object with streamlined Intune properties
+        $resultObj = [pscustomobject]@{
+            # Entra
+            id                            = $d.id
+            displayName                   = $d.displayName
+            deviceId                      = $d.deviceId
+            accountEnabled                = $d.accountEnabled
+            operatingSystem               = $d.operatingSystem
+            operatingSystemVersion        = $d.operatingSystemVersion
+            trustType                     = $d.trustType
+            createdDateTime               = $d.createdDateTime
+            approximateLastSignInDateTime = $d.approximateLastSignInDateTime
+            lastSignInUtc                 = if ($lastSignInUtc) { $lastSignInUtc.ToString('o') } else { $null }
 
-                # Optional Intune enrichment
-                intuneManagedDeviceId         = if ($includeIntune -and $intune) { $intune.id } else { $null }
-                intuneDeviceName              = if ($includeIntune -and $intune) { $intune.deviceName } else { $null }
-                intuneLastSyncDateTime        = if ($includeIntune -and $intuneLastSyncUtc) { $intuneLastSyncUtc.ToString('o') } else { $null }
-                intuneEnrolledDateTime        = if ($includeIntune -and $intune) { $intune.enrolledDateTime } else { $null }
-                intuneComplianceState         = if ($includeIntune -and $intune) { $intune.complianceState } else { $null }
-                intuneManagementAgent         = if ($includeIntune -and $intune) { $intune.managementAgent } else { $null }
-                intuneUserPrincipalName       = if ($includeIntune -and $intune) { $intune.userPrincipalName } else { $null }
-                intuneOs                      = if ($includeIntune -and $intune) { $intune.operatingSystem } else { $null }
-                intuneOsVersion               = if ($includeIntune -and $intune) { $intune.osVersion } else { $null }
+            # Evaluation
+            includeIntune                 = $includeIntune
+            activitySourceUsed            = $activitySource
+            activityTimestampUtc          = if ($activityUtc) { $activityUtc.ToString('o') } else { $null }
+            classification                = $classification
+            daysSinceLastActivity         = $daysSinceLastActivity
+            staleThresholdDateUtc         = $cutoffUtcStr
+            staleDaysThreshold            = $staleDays
+        }
 
-                # Evaluation
-                includeIntune                 = $includeIntune
-                activitySourceUsed            = $activitySource
-                activityTimestampUtc          = if ($activityUtc) { $activityUtc.ToString('o') } else { $null }
-                classification                = $classification
-                daysSinceLastActivity         = $daysSinceLastActivity
-                staleThresholdDateUtc         = $cutoffUtcStr
-                staleDaysThreshold            = $staleDays
-            })
+        # Add Intune properties if enabled (avoids repeated conditionals)
+        if ($includeIntune) {
+            $resultObj | Add-Member -NotePropertyName intuneManagedDeviceId -NotePropertyValue ($intune?.id) -Force
+            $resultObj | Add-Member -NotePropertyName intuneDeviceName -NotePropertyValue ($intune?.deviceName) -Force
+            $resultObj | Add-Member -NotePropertyName intuneLastSyncDateTime -NotePropertyValue ($intuneLastSyncUtc?.ToString('o')) -Force
+            $resultObj | Add-Member -NotePropertyName intuneEnrolledDateTime -NotePropertyValue ($intune?.enrolledDateTime) -Force
+            $resultObj | Add-Member -NotePropertyName intuneComplianceState -NotePropertyValue ($intune?.complianceState) -Force
+            $resultObj | Add-Member -NotePropertyName intuneManagementAgent -NotePropertyValue ($intune?.managementAgent) -Force
+            $resultObj | Add-Member -NotePropertyName intuneUserPrincipalName -NotePropertyValue ($intune?.userPrincipalName) -Force
+            $resultObj | Add-Member -NotePropertyName intuneOs -NotePropertyValue ($intune?.operatingSystem) -Force
+            $resultObj | Add-Member -NotePropertyName intuneOsVersion -NotePropertyValue ($intune?.osVersion) -Force
+        }
+
+        $results.Add($resultObj)
     }
 
     # Summary statistics
