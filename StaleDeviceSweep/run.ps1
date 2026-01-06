@@ -310,8 +310,8 @@ function Get-ActivityTimestamp {
 
 function Get-IntuneManagedDevicesMap {
     <#
-      Returns a hashtable keyed by azureADDeviceId (lowercase).
-      If duplicates exist, keeps the record with the newest lastSyncDateTime.
+        Returns a hashtable keyed by azureADDeviceId (lowercase).
+        If duplicates exist, keeps the record with the newest lastSyncDateTime.
     #>
     param(
         [Parameter(Mandatory)][string]$AccessToken,
@@ -362,11 +362,11 @@ function Get-IntuneManagedDevicesMap {
 
 function Get-DeviceClassification {
     <#
-      Classifies a device based on chosen activity timestamp:
-      - signin      => Entra approximateLastSignInDateTime
-      - intune      => Intune lastSyncDateTime
-      - mostrecent  => max(signin, intune)
-      Fallback if no activity: createdDateTime -> Stale-NoSignIn/Unknown
+        Classifies a device based on chosen activity timestamp:
+        - signin      => Entra approximateLastSignInDateTime
+        - intune      => Intune lastSyncDateTime
+        - mostrecent  => max(signin, intune)
+        Fallback if no activity: createdDateTime -> Stale-NoSignIn/Unknown
     #>
     param(
         [Parameter(Mandatory)] [datetime] $CutoffUtc,
