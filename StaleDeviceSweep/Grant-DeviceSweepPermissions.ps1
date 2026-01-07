@@ -50,6 +50,12 @@ $permissionBundles = @(
         Description = 'Full access: Disable, tag, retire, wipe, and delete devices'
         Permissions = @('Device.ReadWrite.All', 'DeviceManagementManagedDevices.ReadWrite.All')
         Recommended = 'For complete automation (MODE=execute with all actions)'
+    },
+    [PSCustomObject]@{
+        Name = 'Entra + Intune Full Access + Exception Groups'
+        Description = 'Full access with support for exception groups (EXCEPTION_GROUP_ID)'
+        Permissions = @('Device.ReadWrite.All', 'DeviceManagementManagedDevices.ReadWrite.All', 'GroupMember.Read.All')
+        Recommended = 'For complete automation with group-based device exceptions'
     }
 )
 

@@ -88,6 +88,12 @@
     # Advanced: Allow disable even with duplicate Intune matches
     MODE=execute INCLUDE_INTUNE=true CONFIRM_DISABLE=true ALLOW_DISABLE_ON_DUPLICATE=true
 
+.EXAMPLE
+    # Exception lists: Protect specific devices from any actions
+    MODE=execute EXCEPTION_GROUP_ID=<guid>
+    EXCEPTION_NAME_PATTERNS=VIP-*,Executive-*,CEO-*
+    EXCEPTION_DEVICE_IDS=<guid>,<guid>
+
 .ENVIRONMENT
     Core:
         STALE_DAYS=90
@@ -126,9 +132,14 @@
 
     Extension:
         EXTENSION_NAME=STALE
+    
+    Exceptions (devices never acted on):
+        EXCEPTION_GROUP_ID=<guid>                      # Entra group containing protected devices
+        EXCEPTION_NAME_PATTERNS=VIP-*,Executive-*      # Comma-separated wildcards
+        EXCEPTION_DEVICE_IDS=<guid>,<guid>             # Comma-separated device object IDs
 
 .PERMISSIONS (Graph application permissions; managed identity / app-only)
-    - Entra read:    Device.Read.All
+    - Entra read:    Device.Read.All, GroupMember.Read.All (latter required for EXCEPTION_GROUP_ID)
     - Entra write:   Device.ReadWrite.All (required for disable + open extensions tagging)
     - Intune read:   DeviceManagementManagedDevices.Read.All (required when INCLUDE_INTUNE=true)
     - Intune write:  DeviceManagementManagedDevices.ReadWrite.All (required for retire/wipe/delete)
@@ -200,6 +211,23 @@ $intuneCutoffUtcStr = $intuneCutoffUtc.ToString('o')
 
 # Parallelism for actions (tune based on environment size)
 $actionParallelism = [int]($env:ACTION_PARALLELISM ?? 5)  # 3-10 recommended
+
+# Exception lists (devices never acted on)
+$exceptionGroupId = $env:EXCEPTION_GROUP_ID
+$exceptionNamePatternsRaw = $env:EXCEPTION_NAME_PATTERNS ?? ''
+$exceptionNamePatterns = @()
+if (-not [string]::IsNullOrWhiteSpace($exceptionNamePatternsRaw)) {
+    $exceptionNamePatterns = $exceptionNamePatternsRaw.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+}
+
+$exceptionDeviceIdsRaw = $env:EXCEPTION_DEVICE_IDS ?? ''
+$exceptionDeviceIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+if (-not [string]::IsNullOrWhiteSpace($exceptionDeviceIdsRaw)) {
+    $exceptionDeviceIdsRaw.Split(',') | ForEach-Object { 
+        $id = $_.Trim()
+        if ($id) { $exceptionDeviceIds.Add($id) | Out-Null }
+    }
+}
 
 Write-Host "=== Entra stale device sweep (v2.0: Intune decisioning/actions) ==="
 Write-Host "Now (UTC):               $nowUtcStr"
@@ -745,6 +773,71 @@ function Get-IntuneCorrelationStatus {
     'Exact-Duplicate'
 }
 
+function Get-ExceptionGroupMembers {
+    <#
+        Fetches device members from an Entra ID group for exception list.
+        Returns HashSet of device object IDs.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$GroupId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][string]$GraphApiVersion
+    )
+    
+    try {
+        # Fetch group members that are devices
+        $uri = "https://graph.microsoft.com/$GraphApiVersion/groups/$GroupId/members/microsoft.graph.device?`$select=id"
+        $members = Invoke-GraphGetAll -Uri $uri -AccessToken $AccessToken
+        
+        $deviceIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($m in $members) {
+            if ($m.id) { $deviceIds.Add($m.id) | Out-Null }
+        }
+        
+        Write-Host "Exception group members: $($deviceIds.Count) devices"
+        return $deviceIds
+    }
+    catch {
+        Write-Warning "Failed to fetch exception group members: $($_.Exception.Message)"
+        return [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    }
+}
+
+function Test-DeviceException {
+    <#
+        Checks if a device matches any exception criteria (group, pattern, or explicit ID).
+        Returns: [pscustomobject]@{ isException=$true/$false; reason="..." }
+    #>
+    param(
+        [Parameter(Mandatory)][string]$DeviceId,
+        [Parameter(Mandatory)][string]$DisplayName,
+        [Parameter(Mandatory)][System.Collections.Generic.HashSet[string]]$GroupMemberIds,
+        [Parameter(Mandatory)][string[]]$NamePatterns,
+        [Parameter(Mandatory)][System.Collections.Generic.HashSet[string]]$ExplicitDeviceIds
+    )
+    
+    # Check explicit device ID list first (fastest)
+    if ($ExplicitDeviceIds.Count -gt 0 -and $ExplicitDeviceIds.Contains($DeviceId)) {
+        return [pscustomobject]@{ isException = $true; reason = 'Explicit exception list' }
+    }
+    
+    # Check group membership
+    if ($GroupMemberIds.Count -gt 0 -and $GroupMemberIds.Contains($DeviceId)) {
+        return [pscustomobject]@{ isException = $true; reason = 'Exception group member' }
+    }
+    
+    # Check name patterns
+    if ($NamePatterns.Count -gt 0) {
+        foreach ($pattern in $NamePatterns) {
+            if ($DisplayName -like $pattern) {
+                return [pscustomobject]@{ isException = $true; reason = "Name matches pattern '$pattern'" }
+            }
+        }
+    }
+    
+    return [pscustomobject]@{ isException = $false; reason = $null }
+}
+
 function Get-Decision {
     <#
         Produces an Intune-aware decision (for MODE=decide/execute).
@@ -767,6 +860,11 @@ function Get-Decision {
         [Parameter(Mandatory)] [string[]] $OnlyDisableAgents,
         [Parameter(Mandatory)] [bool] $AllowDisableOnDuplicate
     )
+
+    # Exception check (highest priority - never action exception devices)
+    if ($EntraItem.isException) {
+        return & $buildResult 'none' $EntraItem.exceptionReason
+    }
 
     # Pre-calculate Entra signals once
     $isEntraCandidate = ($EntraItem.classification -in @('Stale', 'Stale-NoSignIn'))
@@ -884,6 +982,18 @@ try {
     # Optional Intune index (duplicates preserved)
     $intuneIndex = $null
     $intuneStats = $null
+        # Fetch exception group members if configured
+    $exceptionGroupMembers = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    if (-not [string]::IsNullOrWhiteSpace($exceptionGroupId)) {
+        $exceptionGroupMembers = Get-ExceptionGroupMembers -GroupId $exceptionGroupId -AccessToken $token -GraphApiVersion $graphApiVersion
+    }
+
+    # Log exception configuration
+    $totalExceptionSources = 0
+    if ($exceptionGroupMembers.Count -gt 0) { $totalExceptionSources++; Write-Host "Exception sources: Group ($($exceptionGroupMembers.Count) devices)" }
+    if ($exceptionNamePatterns.Count -gt 0) { $totalExceptionSources++; Write-Host "Exception sources: Name patterns ($($exceptionNamePatterns -join ', '))" }
+    if ($exceptionDeviceIds.Count -gt 0) { $totalExceptionSources++; Write-Host "Exception sources: Explicit IDs ($($exceptionDeviceIds.Count) devices)" }
+    if ($totalExceptionSources -eq 0) { Write-Host "Exception sources: None configured" }
     if ($includeIntune) {
         $idxObj = Get-IntuneManagedDevicesIndex -AccessToken $token -GraphApiVersion $graphApiVersion
         $intuneIndex = $idxObj.index
@@ -925,6 +1035,14 @@ try {
         }
         else { $null }
 
+        # Check exception lists
+        $exceptionCheck = Test-DeviceException `
+            -DeviceId $d.id `
+            -DisplayName ($d.displayName ?? '') `
+            -GroupMemberIds $exceptionGroupMembers `
+            -NamePatterns $exceptionNamePatterns `
+            -ExplicitDeviceIds $exceptionDeviceIds
+
         # Build base result object
         $resultObj = [pscustomobject]@{
             # Entra
@@ -963,6 +1081,8 @@ try {
             $resultObj | Add-Member -NotePropertyName intuneUserPrincipalName -NotePropertyValue ($intunePrimary?.userPrincipalName) -Force
             $resultObj | Add-Member -NotePropertyName intuneOs -NotePropertyValue ($intunePrimary?.operatingSystem) -Force
             $resultObj | Add-Member -NotePropertyName intuneOsVersion -NotePropertyValue ($intunePrimary?.osVersion) -Force
+            $resultObj | Add-Member -NotePropertyName isException -NotePropertyValue $exceptionCheck.isException -Force
+            $resultObj | Add-Member -NotePropertyName exceptionReason -NotePropertyValue $exceptionCheck.reason -Force
         }
 
         # Decision (only meaningful for decide/execute; but we compute always for visibility)
