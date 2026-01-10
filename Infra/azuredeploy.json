@@ -318,6 +318,7 @@
         "functionAppName": "[toLower(concat(parameters('namePrefix'), '-func-', uniqueString(resourceGroup().id)))]",
         "storageAccountName": "[toLower(substring(concat('sa', parameters('namePrefix'), uniqueString(resourceGroup().id, 'stg'), '000000000000000000000000'), 0, 24))]",
         "appInsightsName": "[toLower(concat(parameters('namePrefix'), '-ai-', uniqueString(resourceGroup().id)))]",
+        "logAnalyticsWorkspaceName": "[toLower(concat(parameters('namePrefix'), '-law-', uniqueString(resourceGroup().id)))]",
         "storageSku": "Standard_LRS"
     },
     "resources": [
