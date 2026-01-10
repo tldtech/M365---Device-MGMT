@@ -1,0 +1,39 @@
+# Default: normalize text files to LF in repo
+* text=auto eol=lf
+
+# PowerShell scripts/modules
+*.ps1  text eol=lf
+*.psm1 text eol=lf
+*.psd1 text eol=lf
+
+# Azure Functions / config files
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+
+# Shell scripts
+*.sh   text eol=lf
+
+# Windows scripts should stay CRLF
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1xml text eol=lf
+
+# Binary assets (never modify line endings)
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.7z   binary
+*.gz   binary
+*.tar  binary
+*.pfx  binary
+*.p12  binary
+*.exe  binary
