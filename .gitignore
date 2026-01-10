@@ -55,7 +55,10 @@ output/
 ############################
 # PowerShell local module/vendor folders
 ############################
-Modules/
+Modules/*
+!Modules/README.md
+!Modules/Required/
+!Modules/Required/**
 PSModules/
 .psmodules/
 
