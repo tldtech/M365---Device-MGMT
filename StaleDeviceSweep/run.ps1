@@ -242,6 +242,49 @@ Write-Host "Confirm disable/tag:     disable=$confirmDisable  tag=$confirmTag"
 Write-Host "Confirm Intune actions:  retire=$confirmIntuneRetire  wipe=$confirmIntuneWipe  delete=$confirmIntuneDelete"
 Write-Host "Per-action caps:         disable=$maxDisable tag=$maxTag retire=$maxRetire wipe=$maxWipe intuneDelete=$maxIntuneDelete"
 Write-Host "Decision rules:          requireBothStaleForDisable=$requireBothStaleForDisable dontDisableIfRecentSync=$dontDisableIfIntuneRecentSync recentDays=$intuneRecentSyncDays dontDisableIfCompliant=$dontDisableIfCompliant allowDisableOnDuplicate=$allowDisableOnDuplicate"
+# ---------------------------
+# Structured config snapshot for App Insights (Workbook-friendly)
+# ---------------------------
+
+$cfgEvent = @{
+    eventType                     = "staleDeviceSweep.config"
+    version                       = "v2.0-intune-decisioning"
+    mode                          = $mode
+    includeIntune                 = $includeIntune
+    activitySource                = $activitySource
+    staleDays                     = $staleDays
+    intuneStaleDays               = $intuneStaleDays
+    maxActions                    = $maxActions
+    actionParallelism             = $actionParallelism
+
+    confirms = @{
+        disable                    = $confirmDisable
+        tag                        = $confirmTag
+        intuneRetire               = $confirmIntuneRetire
+        intuneWipe                 = $confirmIntuneWipe
+        intuneDelete               = $confirmIntuneDelete
+    }
+
+    limits = @{
+        maxDisable                 = $maxDisable
+        maxTag                     = $maxTag
+        maxRetire                  = $maxRetire
+        maxWipe                    = $maxWipe
+        maxIntuneDelete            = $maxIntuneDelete
+    }
+
+    decisionRules = @{
+        requireBothStaleForDisable = $requireBothStaleForDisable
+        dontDisableIfRecentSync    = $dontDisableIfIntuneRecentSync
+        intuneRecentSyncDays       = $intuneRecentSyncDays
+        dontDisableIfCompliant     = $dontDisableIfCompliant
+        onlyDisableAgents          = ($onlyDisableAgents -join ",")
+        allowDisableOnDuplicate    = $allowDisableOnDuplicate
+    }
+}
+
+# Prefix makes this trivial to find in KQL
+Write-Host ("CFG " + ($cfgEvent | ConvertTo-Json -Compress))
 if ($onlyDisableAgents.Count -gt 0) { Write-Host "Only disable if managementAgent in: $($onlyDisableAgents -join ', ')" }
 
 # ---------------------------
