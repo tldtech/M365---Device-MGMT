@@ -1,0 +1,225 @@
+{
+    "version": "Notebook/1.0",
+    "items": [
+        {
+            "type": 1,
+            "name": "Entra Stale Device Sweep — Workbook (CFG + Requests)",
+            "styleSettings": {
+                "paddingStyle": "m",
+                "titleSize": "l"
+            },
+            "content": {
+                "json": "## Entra Stale Device Sweep — Workbook (CFG + Requests)\nThis workbook is designed for your **Azure Function (Flex Consumption)** using **workspace-based Application Insights / Log Analytics**.\n\n**How it works**\n- Uses `requests` (not sampled in your `host.json`) as the source of truth for **each run**.\n- Parses a single structured line you emit once per run: `Write-Host (\"CFG \" + (<json>))`.\n- Joins config → run → exceptions/warnings by `operation_Id`.\n\n**Tip:** If your workspace has multiple apps, use the *Cloud role contains* filter.\n"
+            }
+        },
+        {
+            "type": 9,
+            "name": "Parameters",
+            "content": {
+                "version": "KqlParameterItem/1.0",
+                "styleSettings": {
+                    "paddingStyle": "m"
+                },
+                "parameters": [
+                    {
+                        "id": "timeRange",
+                        "name": "Time range",
+                        "type": 4,
+                        "isRequired": true,
+                        "value": {
+                            "durationMs": 86400000
+                        },
+                        "typeSettings": {
+                            "selectableValues": [
+                                {
+                                    "name": "Last 1 hour",
+                                    "durationMs": 3600000
+                                },
+                                {
+                                    "name": "Last 6 hours",
+                                    "durationMs": 21600000
+                                },
+                                {
+                                    "name": "Last 12 hours",
+                                    "durationMs": 43200000
+                                },
+                                {
+                                    "name": "Last 24 hours",
+                                    "durationMs": 86400000
+                                },
+                                {
+                                    "name": "Last 3 days",
+                                    "durationMs": 259200000
+                                },
+                                {
+                                    "name": "Last 7 days",
+                                    "durationMs": 604800000
+                                },
+                                {
+                                    "name": "Last 14 days",
+                                    "durationMs": 1209600000
+                                },
+                                {
+                                    "name": "Last 30 days",
+                                    "durationMs": 2592000000
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "id": "cloudRoleFilter",
+                        "name": "Cloud role contains (optional)",
+                        "type": 2,
+                        "isRequired": false,
+                        "value": "",
+                        "typeSettings": {
+                            "placeholder": "e.g. your function app name/role (leave blank for all)"
+                        }
+                    },
+                    {
+                        "id": "functionNameFilter",
+                        "name": "Request name contains (optional)",
+                        "type": 2,
+                        "isRequired": false,
+                        "value": "",
+                        "typeSettings": {
+                            "placeholder": "e.g. StaleDeviceSweep (leave blank for all)"
+                        }
+                    },
+                    {
+                        "id": "modeFilter",
+                        "name": "MODE (optional)",
+                        "type": 2,
+                        "isRequired": false,
+                        "value": "",
+                        "typeSettings": {
+                            "placeholder": "detect / disable / tag / decide / execute (leave blank for all)"
+                        }
+                    },
+                    {
+                        "id": "includeIntuneFilter",
+                        "name": "Include Intune (optional)",
+                        "type": 2,
+                        "isRequired": false,
+                        "value": "",
+                        "typeSettings": {
+                            "placeholder": "true / false (leave blank for all)"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": 1,
+            "name": "Runs",
+            "styleSettings": {
+                "paddingStyle": "m"
+            },
+            "content": {
+                "json": "### Runs\nEach row is a **single invocation** from `requests`, joined to your structured `CFG` line from `traces`.\n\nIf `mode/includeIntune` are blank, that run likely occurred **before** the CFG log line was added (or trace sampling removed it).\n"
+            }
+        },
+        {
+            "type": 3,
+            "name": "Recent Runs (requests + CFG join)",
+            "content": {
+                "version": "KqlItem/1.0",
+                "resourceType": "microsoft.operationalinsights/workspaces",
+                "queryType": 0,
+                "timeContextFromParameter": "timeRange",
+                "visualization": "table",
+                "query": "let lookback = ago({timeRange});\n\nlet runs =\nrequests\n| where timestamp >= lookback\n| where isempty(\"{cloudRoleFilter}\") or cloud_RoleName has \"{cloudRoleFilter}\"\n| where isempty(\"{functionNameFilter}\") or name has \"{functionNameFilter}\"\n| project\n    runStart = timestamp,\n    durationMs = toreal(duration),\n    success,\n    resultCode,\n    operation_Id,\n    cloud_RoleName,\n    requestName = name;\n\nlet cfg =\ntraces\n| where timestamp >= lookback\n| where isempty(\"{cloudRoleFilter}\") or cloud_RoleName has \"{cloudRoleFilter}\"\n| where message startswith \"CFG \"\n| extend cfg = parse_json(substring(message, 4))\n| project\n    operation_Id,\n    mode = tolower(tostring(cfg.mode)),\n    includeIntune = tolower(tostring(cfg.includeIntune)),\n    activitySource = tolower(tostring(cfg.activitySource)),\n    staleDays = toint(cfg.staleDays),\n    intuneStaleDays = toint(cfg.intuneStaleDays),\n    maxActions = toint(cfg.maxActions),\n    actionParallelism = toint(cfg.actionParallelism),\n    confirms = cfg.confirms,\n    limits = cfg.limits,\n    decisionRules = cfg.decisionRules;\n\nruns\n| join kind=leftouter cfg on operation_Id\n| where isempty(\"{modeFilter}\") or mode has tolower(\"{modeFilter}\")\n| where isempty(\"{includeIntuneFilter}\") or includeIntune has tolower(\"{includeIntuneFilter}\")\n| project\n    runStart,\n    durationMs,\n    success,\n    resultCode,\n    requestName,\n    cloud_RoleName,\n    mode,\n    includeIntune,\n    activitySource,\n    staleDays,\n    intuneStaleDays,\n    maxActions,\n    actionParallelism,\n    confirms,\n    limits,\n    decisionRules,\n    operation_Id\n| order by runStart desc"
+            }
+        },
+        {
+            "type": 1,
+            "name": "Health Summary",
+            "styleSettings": {
+                "paddingStyle": "m"
+            },
+            "content": {
+                "json": "### Health Summary\nQuick view of run counts, failure rate, and typical duration.\n"
+            }
+        },
+        {
+            "type": 3,
+            "name": "Run health stats (by role)",
+            "content": {
+                "version": "KqlItem/1.0",
+                "resourceType": "microsoft.operationalinsights/workspaces",
+                "queryType": 0,
+                "timeContextFromParameter": "timeRange",
+                "visualization": "table",
+                "query": "let lookback = ago({timeRange});\nrequests\n| where timestamp >= lookback\n| where isempty(\"{cloudRoleFilter}\") or cloud_RoleName has \"{cloudRoleFilter}\"\n| where isempty(\"{functionNameFilter}\") or name has \"{functionNameFilter}\"\n| summarize\n    runs = count(),\n    failures = countif(success == false),\n    failureRatePct = round(100.0 * todouble(countif(success == false)) / todouble(count()), 2),\n    p50Ms = percentile(duration, 50),\n    p95Ms = percentile(duration, 95),\n    maxMs = max(duration)\n  by cloud_RoleName\n| order by failures desc"
+            }
+        },
+        {
+            "type": 1,
+            "name": "Errors by Run",
+            "styleSettings": {
+                "paddingStyle": "m"
+            },
+            "content": {
+                "json": "### Errors by Run\nThese tables group issues by `operation_Id` so you can map them back to a specific invocation.\n"
+            }
+        },
+        {
+            "type": 3,
+            "name": "Exceptions grouped by run",
+            "content": {
+                "version": "KqlItem/1.0",
+                "resourceType": "microsoft.operationalinsights/workspaces",
+                "queryType": 0,
+                "timeContextFromParameter": "timeRange",
+                "visualization": "table",
+                "query": "let lookback = ago({timeRange});\nexceptions\n| where timestamp >= lookback\n| where isempty(\"{cloudRoleFilter}\") or cloud_RoleName has \"{cloudRoleFilter}\"\n| summarize exceptions=count(), last=max(timestamp), sampleMessage=any(message), sampleType=any(type) by operation_Id, cloud_RoleName\n| order by last desc"
+            }
+        },
+        {
+            "type": 3,
+            "name": "Warning/Error traces grouped by run",
+            "content": {
+                "version": "KqlItem/1.0",
+                "resourceType": "microsoft.operationalinsights/workspaces",
+                "queryType": 0,
+                "timeContextFromParameter": "timeRange",
+                "visualization": "table",
+                "query": "let lookback = ago({timeRange});\ntraces\n| where timestamp >= lookback\n| where isempty(\"{cloudRoleFilter}\") or cloud_RoleName has \"{cloudRoleFilter}\"\n| where severityLevel >= 2 or message has \"Write-Warning\" or message has \"Write-Error\" or message has \"Failed\" or message has \"HTTP\" or message has \"Retry\"\n| summarize traceEvents=count(), last=max(timestamp), sample=any(message) by operation_Id, cloud_RoleName\n| order by last desc"
+            }
+        },
+        {
+            "type": 1,
+            "name": "Graph Throttling / Retries",
+            "styleSettings": {
+                "paddingStyle": "m"
+            },
+            "content": {
+                "json": "### Graph Throttling / Retries\nYour script emits retry warnings like: `Graph API returned 429... Retry ...`.\nThis section summarizes those by run.\n"
+            }
+        },
+        {
+            "type": 3,
+            "name": "Retry events by run",
+            "content": {
+                "version": "KqlItem/1.0",
+                "resourceType": "microsoft.operationalinsights/workspaces",
+                "queryType": 0,
+                "timeContextFromParameter": "timeRange",
+                "visualization": "table",
+                "query": "let lookback = ago({timeRange});\ntraces\n| where timestamp >= lookback\n| where isempty(\"{cloudRoleFilter}\") or cloud_RoleName has \"{cloudRoleFilter}\"\n| where message has \"Graph API returned\" and message has \"Retry\"\n| extend httpCode = toint(extract(@\"returned\\s+(\\d+)\", 1, message))\n| extend waitSeconds = toint(extract(@\"after\\s+(\\d+)\\s+seconds\", 1, message))\n| summarize retries=count(), maxWait=max(waitSeconds), last=max(timestamp) by operation_Id, cloud_RoleName, httpCode\n| order by last desc"
+            }
+        },
+        {
+            "type": 1,
+            "name": "Blob Outputs Reminder",
+            "styleSettings": {
+                "paddingStyle": "m"
+            },
+            "content": {
+                "json": "### Blob Outputs Reminder\nYour device-level details are written via output bindings:\n- `reportBlob` (JSON report)\n- `summaryBlob` (text summary)\n\nThis workbook focuses on **invocation health + configuration snapshot + errors**.\n\nIf you want the workbook to show **planned/executed counts** reliably, add one more structured line near the end:\n- `Write-Host (\"RESULT \" + (<json>))`\nThen we can build charts for `candidateCount`, `plannedActionCount`, `executedCount`, and per-action outcomes.\n"
+            }
+        }
+    ],
+    "styleSettings": {},
+    "fallbackResourceIds": []
+}
