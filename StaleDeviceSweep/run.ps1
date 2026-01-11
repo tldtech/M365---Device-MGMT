@@ -854,9 +854,9 @@ function Test-DeviceException {
     param(
         [Parameter(Mandatory)][string]$DeviceId,
         [Parameter(Mandatory)][string]$DisplayName,
-        [Parameter(Mandatory)][System.Collections.Generic.HashSet[string]]$GroupMemberIds,
-        [Parameter(Mandatory)][string[]]$NamePatterns,
-        [Parameter(Mandatory)][System.Collections.Generic.HashSet[string]]$ExplicitDeviceIds
+        [System.Collections.Generic.HashSet[string]]$GroupMemberIds = [System.Collections.Generic.HashSet[string]]::new(),
+        [string[]]$NamePatterns = @(),
+        [System.Collections.Generic.HashSet[string]]$ExplicitDeviceIds = [System.Collections.Generic.HashSet[string]]::new()
     )
     
     # Check explicit device ID list first (fastest)
@@ -1112,6 +1112,10 @@ try {
             # Intune correlation
             intuneMatchStatus             = $intuneMatchStatus
             intuneMatchesCount            = if ($intuneMatches) { [int]$intuneMatches.Count } else { 0 }
+            
+            # Exception tracking (always included - used by decision logic)
+            isException                   = $exceptionCheck.isException
+            exceptionReason               = $exceptionCheck.reason
         }
 
         if ($includeIntune) {
@@ -1124,8 +1128,6 @@ try {
             $resultObj | Add-Member -NotePropertyName intuneUserPrincipalName -NotePropertyValue ($intunePrimary?.userPrincipalName) -Force
             $resultObj | Add-Member -NotePropertyName intuneOs -NotePropertyValue ($intunePrimary?.operatingSystem) -Force
             $resultObj | Add-Member -NotePropertyName intuneOsVersion -NotePropertyValue ($intunePrimary?.osVersion) -Force
-            $resultObj | Add-Member -NotePropertyName isException -NotePropertyValue $exceptionCheck.isException -Force
-            $resultObj | Add-Member -NotePropertyName exceptionReason -NotePropertyValue $exceptionCheck.reason -Force
         }
 
         # Decision (only meaningful for decide/execute; but we compute always for visibility)
@@ -1597,21 +1599,24 @@ try {
     Push-OutputBinding -Name summaryBlob -Value $summaryText
     Write-Host "Summary text (first 100 chars): $($summaryText.Substring(0, [Math]::Min(100, $summaryText.Length)))"
     Write-Host "Reports written to blob output bindings."
-    
+
     # Emit structured result for workbook metrics
     $resultEvent = @{
-        eventType       = "staleDeviceSweep.result"
-        candidateCount  = $report.devices.Count
-        activeCount     = $counts.active
-        staleCount      = $counts.stale
-        plannedActions  = $actionPlan.Count
-        executedActions = $actionsExecuted.Count
-        actionBreakdown = @{
-            disable = ($actionsExecuted | Where-Object { $_.action -eq 'disable' }).Count
-            tag     = ($actionsExecuted | Where-Object { $_.action -eq 'tag' }).Count
-            retire  = ($actionsExecuted | Where-Object { $_.action -eq 'intune-retire' }).Count
-            wipe    = ($actionsExecuted | Where-Object { $_.action -eq 'intune-wipe' }).Count
-            delete  = ($actionsExecuted | Where-Object { $_.action -eq 'intune-delete' }).Count
+        eventType          = "staleDeviceSweep.result"
+        totalDevices       = $report.totalDevices
+        candidateCount     = $report.items.Count
+        activeCount        = ($counts | Where-Object { $_.classification -eq 'Active' } | Select-Object -ExpandProperty count -ErrorAction SilentlyContinue) ?? 0
+        staleCount         = ($counts | Where-Object { $_.classification -eq 'Stale' } | Select-Object -ExpandProperty count -ErrorAction SilentlyContinue) ?? 0
+        staleNoSignInCount = ($counts | Where-Object { $_.classification -eq 'Stale-NoSignIn' } | Select-Object -ExpandProperty count -ErrorAction SilentlyContinue) ?? 0
+        unknownCount       = ($counts | Where-Object { $_.classification -eq 'Unknown' } | Select-Object -ExpandProperty count -ErrorAction SilentlyContinue) ?? 0
+        plannedActions     = $actionPlan.Count
+        executedActions    = $actionsExecuted.Count
+        actionBreakdown    = @{
+            disable = @($actionsExecuted | Where-Object { $_.action -eq 'disable' }).Count
+            tag     = @($actionsExecuted | Where-Object { $_.action -eq 'tag' }).Count
+            retire  = @($actionsExecuted | Where-Object { $_.action -eq 'intune-retire' }).Count
+            wipe    = @($actionsExecuted | Where-Object { $_.action -eq 'intune-wipe' }).Count
+            delete  = @($actionsExecuted | Where-Object { $_.action -eq 'intune-delete' }).Count
         }
     }
     Write-Host ("RESULT " + ($resultEvent | ConvertTo-Json -Compress))
