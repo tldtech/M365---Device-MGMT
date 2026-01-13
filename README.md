@@ -97,7 +97,7 @@ This function runs on a timer schedule to scan all devices in your Entra ID tena
 
 The function is triggered by a timer using a [cron expression](https://en.wikipedia.org/wiki/Cron#CRON_expression) defined in `function.json`:
 
-- **Default**: `0 30 1 * * *` (daily at 1:30 AM UTC)
+- **Default**: `0 0 0 * * *` (daily at 12:00 AM UTC)
 - Format: `{second} {minute} {hour} {day} {month} {day-of-week}`
 
 ### Required Permissions
