@@ -240,14 +240,14 @@
         {
             "type": 1,
             "content": {
-                "json": "---\n### Errors\nAny exceptions or errors from recent runs. Note: 404 blob errors are excluded as they are expected when checking if output blobs exist before creation."
+                "json": "---\n### Errors\nAny exceptions or errors from recent runs. Note: Expected errors (404 blob not found, 409 container already exists) are excluded."
             }
         },
         {
             "type": 3,
             "content": {
                 "version": "KqlItem/1.0",
-                "query": "let functionName = case(\n    '{SweepType}' == 'Devices', 'StaleDeviceSweep',\n    '{SweepType}' == 'Users', 'StaleUserSweep',\n    'StaleDeviceSweep'\n);\n\nlet targetOps = AppRequests\n| where Name has functionName\n| project OperationId;\n\nlet exceptions = AppExceptions\n| where OperationId in (targetOps)\n| project TimeGenerated, Type = \"Exception\", SeverityLevel, Message = substring(tostring(OuterMessage), 0, 200), OperationId;\n\nlet errors = AppTraces\n| where OperationId in (targetOps)\n| where SeverityLevel >= 3 or Message has \"Error\" or Message has \"Failed\"\n// Exclude expected 404 blob not found errors (Azure Functions checks blob existence before creation)\n| where Message !contains \"404 The specified blob does not exist\"\n| project TimeGenerated, Type = \"Error\", SeverityLevel, Message = substring(Message, 0, 200), OperationId;\n\nunion exceptions, errors\n| order by TimeGenerated desc",
+                "query": "let functionName = case(\n    '{SweepType}' == 'Devices', 'StaleDeviceSweep',\n    '{SweepType}' == 'Users', 'StaleUserSweep',\n    'StaleDeviceSweep'\n);\n\nlet targetOps = AppRequests\n| where Name has functionName\n| project OperationId;\n\nlet exceptions = AppExceptions\n| where OperationId in (targetOps)\n| project TimeGenerated, Type = \"Exception\", SeverityLevel, Message = substring(tostring(OuterMessage), 0, 200), OperationId;\n\nlet errors = AppTraces\n| where OperationId in (targetOps)\n| where SeverityLevel >= 3 or Message has \"Error\" or Message has \"Failed\"\n// Exclude expected errors from Azure Storage operations\n| where Message !contains \"404 The specified blob does not exist\"\n| where Message !contains \"404 The specified container does not exist\"\n| where Message !contains \"409 The specified container already exists\"\n| project TimeGenerated, Type = \"Error\", SeverityLevel, Message = substring(Message, 0, 200), OperationId;\n\nunion exceptions, errors\n| order by TimeGenerated desc",
                 "size": 0,
                 "timeContextFromParameter": "TimeRange",
                 "queryType": 0,
