@@ -223,7 +223,10 @@ function Invoke-Graph {
         }
     }
     catch {
-        $resp = $_.Exception.Response
+        $resp = $null
+        if ($_.Exception.PSObject.Properties.Match('Response').Count -gt 0) {
+            $resp = $_.Exception.Response
+        }
         if ($resp -and $resp.StatusCode) {
             $code = [int]$resp.StatusCode
             throw "Graph $Method $Uri failed (HTTP $code): $($_.Exception.Message)"
@@ -277,7 +280,7 @@ function Invoke-GraphWithRetry {
             $statusCode = $null
             $retryAfter = $null
 
-            if ($_.Exception.Response) {
+            if ($_.Exception.PSObject.Properties.Match('Response').Count -gt 0 -and $_.Exception.Response) {
                 $statusCode = [int]$_.Exception.Response.StatusCode
                 $retryAfter = $_.Exception.Response.Headers['Retry-After']
             }
@@ -577,8 +580,10 @@ try {
     $token = Get-GraphAccessToken
 
     # Fetch Entra users with sign-in activity
+    # Note: When including signInActivity, the maximum page size is 500 per Microsoft Graph API documentation
+    # See: https://learn.microsoft.com/en-us/graph/api/user-list (Example 11)
     $select = "id,userPrincipalName,displayName,accountEnabled,userType,createdDateTime,signInActivity"
-    $uri = "https://graph.microsoft.com/$graphApiVersion/users?`$select=$([uri]::EscapeDataString($select))&`$top=999"
+    $uri = "https://graph.microsoft.com/$graphApiVersion/users?`$select=$([uri]::EscapeDataString($select))&`$top=500"
     $users = Invoke-GraphGetAll -Uri $uri -AccessToken $token
     Write-Host "Entra users fetched: $($users.Count)"
 

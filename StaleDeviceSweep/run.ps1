@@ -352,7 +352,10 @@ function Invoke-Graph {
         }
     }
     catch {
-        $resp = $_.Exception.Response
+        $resp = $null
+        if ($_.Exception.PSObject.Properties.Match('Response').Count -gt 0) {
+            $resp = $_.Exception.Response
+        }
         if ($resp -and $resp.StatusCode) {
             $code = [int]$resp.StatusCode
             throw "Graph $Method $Uri failed (HTTP $code): $($_.Exception.Message)"
@@ -407,7 +410,7 @@ function Invoke-GraphWithRetry {
             $retryAfter = $null
 
             # Extract status code and Retry-After header
-            if ($_.Exception.Response) {
+            if ($_.Exception.PSObject.Properties.Match('Response').Count -gt 0 -and $_.Exception.Response) {
                 $statusCode = [int]$_.Exception.Response.StatusCode
                 $retryAfter = $_.Exception.Response.Headers['Retry-After']
             }
