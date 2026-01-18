@@ -4,7 +4,31 @@
         {
             "type": 1,
             "content": {
-                "json": "## Stale Device Sweep - Run History\n\nMonitor your Azure Function runs, configuration, and actions taken."
+                "json": "## M365 Stale Management - Run History\n\nMonitor your Azure Function runs for both device and user account sweeps, including configuration and actions taken."
+            }
+        },
+        {
+            "type": 9,
+            "content": {
+                "version": "KqlParameterItem/1.0",
+                "parameters": [
+                    {
+                        "id": "sweeptype-param",
+                        "version": "KqlParameterItem/1.0",
+                        "name": "SweepType",
+                        "label": "Sweep Type",
+                        "type": 2,
+                        "isRequired": true,
+                        "value": "Devices",
+                        "typeSettings": {
+                            "additionalResourceOptions": [],
+                            "showDefault": false
+                        },
+                        "jsonData": "[\"Devices\", \"Users\"]"
+                    }
+                ],
+                "style": "pills",
+                "queryType": 0
             }
         },
         {
@@ -86,7 +110,7 @@
             "type": 3,
             "content": {
                 "version": "KqlItem/1.0",
-                "query": "let runs = AppRequests\n| where Name has \"StaleDeviceSweep\"\n| project TimeGenerated, OperationId, Name, Success, DurationMs, ResultCode;\n\nlet configs = AppTraces\n| where Message has \"CFG \"\n| extend cfg = parse_json(substring(Message, indexof(Message, \"CFG \") + 4))\n| project OperationId,\n    mode = tostring(cfg.mode),\n    includeIntune = tobool(cfg.includeIntune),\n    staleDays = toint(cfg.staleDays);\n\nlet results = AppTraces\n| where Message has \"RESULT \"\n| extend result = parse_json(substring(Message, indexof(Message, \"RESULT \") + 7))\n| project OperationId,\n    totalDevices = toint(result.totalDevices),\n    activeCount = toint(result.activeCount),\n    staleCount = toint(result.staleCount),\n    plannedActions = toint(result.plannedActions),\n    executedActions = toint(result.executedActions);\n\nruns\n| join kind=leftouter configs on OperationId\n| join kind=leftouter results on OperationId\n| project \n    TimeGenerated,\n    ['Duration (s)'] = round(DurationMs / 1000, 1),\n    Success,\n    Mode = mode,\n    ['Intune'] = includeIntune,\n    ['Stale Days'] = staleDays,\n    ['Total Devices'] = totalDevices,\n    ['Active'] = activeCount,\n    ['Stale'] = staleCount,\n    ['Planned Actions'] = plannedActions,\n    ['Executed Actions'] = executedActions,\n    OperationId\n| order by TimeGenerated desc",
+                "query": "let functionName = case(\n    '{SweepType}' == 'Devices', 'StaleDeviceSweep',\n    '{SweepType}' == 'Users', 'StaleUserSweep',\n    'StaleDeviceSweep'\n);\n\nlet runs = AppRequests\n| where Name has functionName\n| project TimeGenerated, OperationId, Name, Success, DurationMs, ResultCode;\n\nlet configs = AppTraces\n| where Message has \"CFG \"\n| extend cfg = parse_json(substring(Message, indexof(Message, \"CFG \") + 4))\n| project OperationId,\n    mode = tostring(cfg.mode),\n    includeIntune = tobool(cfg.includeIntune),\n    staleDays = toint(cfg.staleDays);\n\nlet results = AppTraces\n| where Message has \"RESULT \"\n| extend result = parse_json(substring(Message, indexof(Message, \"RESULT \") + 7))\n| project OperationId,\n    totalItems = coalesce(toint(result.totalDevices), toint(result.totalUsers)),\n    activeCount = toint(result.activeCount),\n    staleCount = toint(result.staleCount),\n    plannedActions = toint(result.plannedActions),\n    executedActions = toint(result.executedActions);\n\nruns\n| join kind=leftouter configs on OperationId\n| join kind=leftouter results on OperationId\n| project \n    TimeGenerated,\n    ['Duration (s)'] = round(DurationMs / 1000, 1),\n    Success,\n    Mode = mode,\n    ['Intune'] = includeIntune,\n    ['Stale Days'] = staleDays,\n    ['Total Items'] = totalItems,\n    ['Active'] = activeCount,\n    ['Stale'] = staleCount,\n    ['Planned Actions'] = plannedActions,\n    ['Executed Actions'] = executedActions,\n    OperationId\n| order by TimeGenerated desc",
                 "size": 0,
                 "timeContextFromParameter": "TimeRange",
                 "queryType": 0,
@@ -156,14 +180,14 @@
         {
             "type": 1,
             "content": {
-                "json": "---\n### Device Classification Trends\nShows how device counts have changed over time."
+                "json": "---\n### Classification Trends\nShows how counts have changed over time."
             }
         },
         {
             "type": 3,
             "content": {
                 "version": "KqlItem/1.0",
-                "query": "let runs = AppRequests\n| where Name has \"StaleDeviceSweep\"\n| project TimeGenerated, OperationId;\n\nlet results = AppTraces\n| where Message has \"RESULT \"\n| extend result = parse_json(substring(Message, indexof(Message, \"RESULT \") + 7))\n| project OperationId,\n    totalDevices = toint(result.totalDevices),\n    activeCount = toint(result.activeCount),\n    staleCount = toint(result.staleCount),\n    staleNoSignInCount = toint(result.staleNoSignInCount),\n    unknownCount = toint(result.unknownCount);\n\nruns\n| join kind=inner results on OperationId\n| project TimeGenerated, activeCount, staleCount, staleNoSignInCount, unknownCount\n| order by TimeGenerated asc",
+                "query": "let functionName = case(\n    '{SweepType}' == 'Devices', 'StaleDeviceSweep',\n    '{SweepType}' == 'Users', 'StaleUserSweep',\n    'StaleDeviceSweep'\n);\n\nlet runs = AppRequests\n| where Name has functionName\n| project TimeGenerated, OperationId;\n\nlet results = AppTraces\n| where Message has \"RESULT \"\n| extend result = parse_json(substring(Message, indexof(Message, \"RESULT \") + 7))\n| project OperationId,\n    totalItems = coalesce(toint(result.totalDevices), toint(result.totalUsers)),\n    activeCount = toint(result.activeCount),\n    staleCount = toint(result.staleCount),\n    staleNoSignInCount = toint(result.staleNoSignInCount),\n    unknownCount = toint(result.unknownCount);\n\nruns\n| join kind=inner results on OperationId\n| project TimeGenerated, activeCount, staleCount, staleNoSignInCount, unknownCount\n| order by TimeGenerated asc",
                 "size": 0,
                 "timeContextFromParameter": "TimeRange",
                 "queryType": 0,
@@ -176,14 +200,14 @@
         {
             "type": 1,
             "content": {
-                "json": "---\n### Device Distribution (Latest Run)\nBreakdown of device classifications from the most recent execution."
+                "json": "---\n### Distribution (Latest Run)\nBreakdown of classifications from the most recent execution."
             }
         },
         {
             "type": 3,
             "content": {
                 "version": "KqlItem/1.0",
-                "query": "let latestRun = AppRequests\n| where Name has \"StaleDeviceSweep\"\n| top 1 by TimeGenerated desc\n| project OperationId;\n\nAppTraces\n| where OperationId in (latestRun)\n| where Message has \"RESULT \"\n| extend result = parse_json(substring(Message, indexof(Message, \"RESULT \") + 7))\n| project \n    Active = toint(result.activeCount),\n    Stale = toint(result.staleCount),\n    StaleNoSignIn = toint(result.staleNoSignInCount),\n    Unknown = toint(result.unknownCount)\n| extend temp = 1\n| project Classification = pack_array('Active', 'Stale', 'Stale (No Sign-In)', 'Unknown'), Count = pack_array(Active, Stale, StaleNoSignIn, Unknown)\n| mv-expand Classification to typeof(string), Count to typeof(int)",
+                "query": "let functionName = case(\n    '{SweepType}' == 'Devices', 'StaleDeviceSweep',\n    '{SweepType}' == 'Users', 'StaleUserSweep',\n    'StaleDeviceSweep'\n);\n\nlet latestRun = AppRequests\n| where Name has functionName\n| top 1 by TimeGenerated desc\n| project OperationId;\n\nAppTraces\n| where OperationId in (latestRun)\n| where Message has \"RESULT \"\n| extend result = parse_json(substring(Message, indexof(Message, \"RESULT \") + 7))\n| project \n    Active = toint(result.activeCount),\n    Stale = toint(result.staleCount),\n    StaleNoSignIn = toint(result.staleNoSignInCount),\n    Unknown = toint(result.unknownCount)\n| extend temp = 1\n| project Classification = pack_array('Active', 'Stale', 'Stale (No Sign-In)', 'Unknown'), Count = pack_array(Active, Stale, StaleNoSignIn, Unknown)\n| mv-expand Classification to typeof(string), Count to typeof(int)",
                 "size": 0,
                 "timeContextFromParameter": "TimeRange",
                 "queryType": 0,
@@ -203,7 +227,7 @@
             "type": 3,
             "content": {
                 "version": "KqlItem/1.0",
-                "query": "let runs = AppRequests\n| where Name has \"StaleDeviceSweep\"\n| project TimeGenerated, OperationId;\n\nlet results = AppTraces\n| where Message has \"RESULT \"\n| extend result = parse_json(substring(Message, indexof(Message, \"RESULT \") + 7))\n| extend actionBreakdown = result.actionBreakdown\n| project OperationId,\n    disable = toint(actionBreakdown.disable),\n    tag = toint(actionBreakdown.tag),\n    retire = toint(actionBreakdown.retire),\n    wipe = toint(actionBreakdown.wipe),\n    delete = toint(actionBreakdown[\"delete\"]);\n\nruns\n| join kind=inner results on OperationId\n| project TimeGenerated, disable, tag, retire, wipe, delete\n| order by TimeGenerated asc",
+                "query": "let functionName = case(\n    '{SweepType}' == 'Devices', 'StaleDeviceSweep',\n    '{SweepType}' == 'Users', 'StaleUserSweep',\n    'StaleDeviceSweep'\n);\n\nlet runs = AppRequests\n| where Name has functionName\n| project TimeGenerated, OperationId;\n\nlet results = AppTraces\n| where Message has \"RESULT \"\n| extend result = parse_json(substring(Message, indexof(Message, \"RESULT \") + 7))\n| extend actionBreakdown = result.actionBreakdown\n| project OperationId,\n    disable = toint(actionBreakdown.disable),\n    tag = toint(actionBreakdown.tag),\n    retire = toint(actionBreakdown.retire),\n    wipe = toint(actionBreakdown.wipe),\n    delete = toint(actionBreakdown[\"delete\"]);\n\nruns\n| join kind=inner results on OperationId\n| project TimeGenerated, disable, tag, retire, wipe, delete\n| order by TimeGenerated asc",
                 "size": 0,
                 "timeContextFromParameter": "TimeRange",
                 "queryType": 0,
@@ -223,7 +247,7 @@
             "type": 3,
             "content": {
                 "version": "KqlItem/1.0",
-                "query": "let targetOps = AppRequests\n| where Name has \"StaleDeviceSweep\"\n| project OperationId;\n\nlet exceptions = AppExceptions\n| where OperationId in (targetOps)\n| project TimeGenerated, Type = \"Exception\", SeverityLevel, Message = substring(tostring(OuterMessage), 0, 200), OperationId;\n\nlet errors = AppTraces\n| where OperationId in (targetOps)\n| where SeverityLevel >= 3 or Message has \"Error\" or Message has \"Failed\"\n// Exclude expected 404 blob not found errors (Azure Functions checks blob existence before creation)\n| where Message !contains \"404 The specified blob does not exist\"\n| project TimeGenerated, Type = \"Error\", SeverityLevel, Message = substring(Message, 0, 200), OperationId;\n\nunion exceptions, errors\n| order by TimeGenerated desc",
+                "query": "let functionName = case(\n    '{SweepType}' == 'Devices', 'StaleDeviceSweep',\n    '{SweepType}' == 'Users', 'StaleUserSweep',\n    'StaleDeviceSweep'\n);\n\nlet targetOps = AppRequests\n| where Name has functionName\n| project OperationId;\n\nlet exceptions = AppExceptions\n| where OperationId in (targetOps)\n| project TimeGenerated, Type = \"Exception\", SeverityLevel, Message = substring(tostring(OuterMessage), 0, 200), OperationId;\n\nlet errors = AppTraces\n| where OperationId in (targetOps)\n| where SeverityLevel >= 3 or Message has \"Error\" or Message has \"Failed\"\n// Exclude expected 404 blob not found errors (Azure Functions checks blob existence before creation)\n| where Message !contains \"404 The specified blob does not exist\"\n| project TimeGenerated, Type = \"Error\", SeverityLevel, Message = substring(Message, 0, 200), OperationId;\n\nunion exceptions, errors\n| order by TimeGenerated desc",
                 "size": 0,
                 "timeContextFromParameter": "TimeRange",
                 "queryType": 0,
@@ -243,7 +267,7 @@
             "type": 3,
             "content": {
                 "version": "KqlItem/1.0",
-                "query": "AppRequests\n| where Name has \"StaleDeviceSweep\"\n| summarize \n    TotalRuns = count(),\n    SuccessRate = round(100.0 * countif(Success == true) / count(), 1),\n    AvgDuration = round(avg(DurationMs) / 1000, 1),\n    MaxDuration = round(max(DurationMs) / 1000, 1)\n| project Metric = pack_array('Total Runs', 'Success Rate %', 'Avg Duration (s)', 'Max Duration (s)'), Value = pack_array(TotalRuns, SuccessRate, AvgDuration, MaxDuration)\n| mv-expand Metric to typeof(string), Value to typeof(real)",
+                "query": "let functionName = case(\n    '{SweepType}' == 'Devices', 'StaleDeviceSweep',\n    '{SweepType}' == 'Users', 'StaleUserSweep',\n    'StaleDeviceSweep'\n);\n\nAppRequests\n| where Name has functionName\n| summarize \n    TotalRuns = count(),\n    SuccessRate = round(100.0 * countif(Success == true) / count(), 1),\n    AvgDuration = round(avg(DurationMs) / 1000, 1),\n    MaxDuration = round(max(DurationMs) / 1000, 1)\n| project Metric = pack_array('Total Runs', 'Success Rate %', 'Avg Duration (s)', 'Max Duration (s)'), Value = pack_array(TotalRuns, SuccessRate, AvgDuration, MaxDuration)\n| mv-expand Metric to typeof(string), Value to typeof(real)",
                 "size": 3,
                 "timeContextFromParameter": "TimeRange",
                 "queryType": 0,
