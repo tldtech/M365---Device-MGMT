@@ -235,6 +235,8 @@ Choose the appropriate permission bundle based on your deployment needs:
 - `GroupMember.Read.All` - Read group membership for exceptions
 - **Use case**: Disable/tag modes without exception groups
 
+> **Note:** To use `AuditLog.Read.All` (required for sign-in activity reporting in StaleUserSweep), your tenant must have Microsoft Entra ID P1 or P2 licenses assigned. This is a Microsoft Graph API requirement. See the [official documentation](https://learn.microsoft.com/en-us/graph/api/user-list?view=graph-rest-1.0#example-11-get-users-including-their-last-sign-in-time) for details.
+
 #### Granting Permissions
 
 Use the included `Grant-Permissions.ps1` script to interactively grant application-type permissions for both device and user management:
